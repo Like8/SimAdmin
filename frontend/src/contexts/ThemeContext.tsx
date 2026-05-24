@@ -55,9 +55,10 @@ export function ThemeProvider({ children }: ThemeProviderProps) {
         dark: mode === 'light' ? '#6d28d9' : '#8b5cf6',
       },
       success: {
-        main: mode === 'light' ? '#2e7d32' : '#66bb6a',
+        main: mode === 'light' ? '#2aae67' : '#66bb6a',
         light: mode === 'light' ? '#4caf50' : '#81c784',
         dark: mode === 'light' ? '#1b5e20' : '#388e3c',
+        contrastText: '#ffffff',
       },
       warning: {
         main: mode === 'light' ? '#ed6c02' : '#ffa726',
@@ -65,9 +66,9 @@ export function ThemeProvider({ children }: ThemeProviderProps) {
         dark: mode === 'light' ? '#e65100' : '#f57c00',
       },
       error: {
-        main: mode === 'light' ? '#d32f2f' : '#f44336',
+        main: mode === 'light' ? '#ef4444' : '#f44336',
         light: mode === 'light' ? '#ef5350' : '#e57373',
-        dark: mode === 'light' ? '#c62828' : '#d32f2f',
+        dark: mode === 'light' ? '#c62828' : '#ef4444',
       },
       info: {
         main: mode === 'light' ? '#0288d1' : '#29b6f6',
@@ -194,6 +195,22 @@ export function ThemeProvider({ children }: ThemeProviderProps) {
           root: {
             borderRadius: 8,
             fontWeight: 500,
+          },
+        },
+      },
+      MuiAlert: {
+        styleOverrides: {
+          filledSuccess: {
+            color: '#ffffff !important',
+            '& .MuiAlert-icon': {
+              color: '#ffffff !important',
+            },
+            '& .MuiAlert-message': {
+              color: '#ffffff !important',
+            },
+            '& .MuiAlert-action .MuiIconButton-root': {
+              color: '#ffffff !important',
+            },
           },
         },
       },

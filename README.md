@@ -34,15 +34,15 @@
   <picture>
     <img src="./static/Dashboard.png" width="100%" alt="Dashboard" />
 	<br/><br/>
-	<img src="./static/Device_Information.png" width="100%" alt="Device_Information" />
+	<img src="./static/SIM.png" width="100%" alt="SIM" />
 	<br/><br/>
 	<img src="./static/eSIM.png" width="100%" alt="eSIM" />
+	<br/><br/>
+	<img src="./static/WiFi_Calling.png" width="100%" alt="WiFi_Calling" />
 	<br/><br/>
 	<img src="./static/Cellular_Network.png" width="100%" alt="Cellular_Network" />
 	<br/><br/>
 	<img src="./static/WLAN.png" width="100%" alt="WLAN" />
-	<br/><br/>
-	<img src="./static/DDNS.png" width="100%" alt="DDNS" />
 	<br/><br/>
 	<img src="./static/SMS.png" width="100%" alt="SMS" />
 	<br/><br/>
@@ -1235,6 +1235,10 @@ SQLite 数据库保存：
 > GNU General Public License v3.0
 
 ## 🎖️ 鸣谢
+
+### 👥 贡献者
+
+[crossgg](https://github.com/crossgg)
 
 ### 📦 参考项目
 

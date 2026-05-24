@@ -70,6 +70,14 @@ function smsTimestampMillis(timestamp: string): number {
   return parseSmsTimestamp(timestamp)?.getTime() ?? 0
 }
 
+function compareSmsChronological(a: SmsMessage, b: SmsMessage): number {
+  return smsTimestampMillis(a.timestamp) - smsTimestampMillis(b.timestamp) || a.id - b.id
+}
+
+function compareSmsNewestFirst(a: SmsMessage, b: SmsMessage): number {
+  return smsTimestampMillis(b.timestamp) - smsTimestampMillis(a.timestamp) || b.id - a.id
+}
+
 function buildConversations(msgs: SmsMessage[]): ConversationGroup[] {
   const groups = new Map<string, SmsMessage[]>()
 
@@ -83,7 +91,7 @@ function buildConversations(msgs: SmsMessage[]): ConversationGroup[] {
 
   const conversationList: ConversationGroup[] = []
   groups.forEach((groupMessages, phoneNumber) => {
-    groupMessages.sort((a, b) => smsTimestampMillis(b.timestamp) - smsTimestampMillis(a.timestamp))
+    groupMessages.sort(compareSmsNewestFirst)
     conversationList.push({
       phoneNumber,
       messages: groupMessages,
@@ -92,9 +100,7 @@ function buildConversations(msgs: SmsMessage[]): ConversationGroup[] {
     })
   })
 
-  conversationList.sort(
-    (a, b) => smsTimestampMillis(b.lastMessage.timestamp) - smsTimestampMillis(a.lastMessage.timestamp),
-  )
+  conversationList.sort((a, b) => compareSmsNewestFirst(a.lastMessage, b.lastMessage))
 
   return conversationList
 }
@@ -220,9 +226,7 @@ export default function SMSPage() {
     try {
       const response = await api.getSmsConversation({ phone_number: phone, limit: 1000 })
       if (response.status === 'ok' && response.data) {
-        const sorted = [...response.data.messages].sort(
-          (a, b) => smsTimestampMillis(a.timestamp) - smsTimestampMillis(b.timestamp),
-        )
+        const sorted = [...response.data.messages].sort(compareSmsChronological)
         setConversationMessages(sorted)
         setTimeout(() => {
           if (scrollTargetId !== undefined) {
@@ -234,9 +238,7 @@ export default function SMSPage() {
       }
     } catch {
       const localMsgs = messages.filter((m) => m.phone_number === phone)
-      const sorted = [...localMsgs].sort(
-        (a, b) => smsTimestampMillis(a.timestamp) - smsTimestampMillis(b.timestamp),
-      )
+      const sorted = [...localMsgs].sort(compareSmsChronological)
       setConversationMessages(sorted)
       setTimeout(() => {
         if (scrollTargetId !== undefined) {
@@ -1013,16 +1015,53 @@ export default function SMSPage() {
                   <Typography variant="body2" sx={{ wordBreak: 'break-word', whiteSpace: 'pre-wrap' }}>
                     {renderHighlightedText(msg.content, searchTerm)}
                   </Typography>
-                  <Box display="flex" alignItems="center" justifyContent="flex-end" gap={0.5} mt={0.5}>
+                  <Box
+                    display="flex"
+                    alignItems="center"
+                    justifyContent="flex-end"
+                    gap={0.5}
+                    mt={0.5}
+                  >
                     <Typography
                       variant="caption"
                       sx={{ opacity: 0.7 }}
                     >
                       {formatTime(msg.timestamp)}
                     </Typography>
+                    {msg.direction === 'incoming' && msg.transport === 'vowifi_ims' && (
+                      <Chip
+                        label="WiFi Calling"
+                        size="small"
+                        sx={{
+                          height: 16,
+                          fontSize: '0.65rem',
+                          bgcolor: '#2aae67',
+                          color: 'white',
+                          borderRadius: 0.5,
+                          px: 0.5,
+                          ml: 0.5,
+                        }}
+                      />
+                    )}
                     {msg.direction === 'outgoing' && (
                       msg.status === 'sent' ? (
-                        <Chip label="已发送" size="small" sx={{ height: 16, fontSize: '0.65rem', bgcolor: 'rgba(255,255,255,0.2)' }} />
+                        <>
+                          <Chip label="已发送" size="small" sx={{ height: 16, fontSize: '0.65rem', bgcolor: 'rgba(255,255,255,0.2)', color: '#ffffff', mr: msg.transport === 'vowifi_ims' ? 0.5 : 0 }} />
+                          {msg.transport === 'vowifi_ims' && (
+                            <Chip
+                              label="WiFi Calling"
+                              size="small"
+                              sx={{
+                                height: 16,
+                                fontSize: '0.65rem',
+                                bgcolor: '#2aae67',
+                                color: 'white',
+                                borderRadius: 0.5,
+                                px: 0.5,
+                              }}
+                            />
+                          )}
+                        </>
                       ) : msg.status === 'failed' ? (
                         <Chip label="失败" size="small" color="error" sx={{ height: 16, fontSize: '0.65rem' }} />
                       ) : null

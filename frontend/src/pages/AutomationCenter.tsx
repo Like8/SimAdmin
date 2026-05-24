@@ -408,7 +408,7 @@ export default function AutomationCenter() {
               variant="outlined"
               size="small"
               label={`成功 ${stats.success}`}
-              sx={{ color: 'success.main', borderColor: 'success.main', bgcolor: 'rgba(46, 125, 50, 0.04)' }}
+              sx={{ color: 'success.main', borderColor: 'success.main', bgcolor: 'rgba(42, 174, 103, 0.04)' }}
             />
             <Chip
               variant="outlined"
