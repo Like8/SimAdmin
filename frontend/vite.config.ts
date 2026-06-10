@@ -39,6 +39,7 @@ export default defineConfig({
   },
   
   server: {
+    host: '127.0.0.1',
     port: 5173,
     // 配置开发服务器代理，将 /api 请求转发到 Rust 后端
     proxy: {

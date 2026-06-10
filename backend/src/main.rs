@@ -25,6 +25,7 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilte
 use zbus::Connection;
 
 mod auth;
+mod automation;
 mod cell_lock_store;
 mod config;
 mod db;
@@ -494,6 +495,9 @@ async fn main() -> Result<()> {
         cell_monitoring_active,
     );
 
+    // 启动自动化中心后台调度引擎
+    automation::spawn_automation_scheduler(app_state.clone());
+
     // Build protected routes - 使用统一的 AppState
     let protected_routes = Router::new()
         // ========== 设备信息接口 ==========
@@ -842,6 +846,25 @@ async fn main() -> Result<()> {
         .route(
             "/api/notifications/queue/{id}/retry",
             post(retry_notification_queue_item_handler).options(options_handler),
+        )
+        // ========== 自动化中心接口 ==========
+        .route(
+            "/api/automation/config",
+            get(get_automation_config_handler)
+                .post(set_automation_config_handler)
+                .options(options_handler),
+        )
+        .route(
+            "/api/automation/logs",
+            get(get_automation_logs_handler).options(options_handler),
+        )
+        .route(
+            "/api/automation/logs/clear",
+            post(clear_automation_logs_handler).options(options_handler),
+        )
+        .route(
+            "/api/automation/test/{task_id}",
+            post(test_automation_task_handler).options(options_handler),
         )
         .route(
             "/api/ota/status",

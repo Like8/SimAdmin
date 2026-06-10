@@ -575,7 +575,7 @@ export type NotificationChannelKey =
   | 'feishu_robot'
   | 'telegram'
 
-export type NotificationEventType = 'sms' | 'ddns' | 'version_update' | 'system_event' | 'device_status'
+export type NotificationEventType = 'sms' | 'ddns' | 'version_update' | 'system_event' | 'device_status' | 'automation'
 export type NotificationLogStatus = 'success' | 'failed' | 'no_available_channel' | 'quiet_hours' | 'unmatched'
 export type MatcherOperator = 'always' | 'contains' | 'not_contains' | 'equals' | 'regex'
 
@@ -1005,4 +1005,49 @@ export interface WlanProfileRequest {
 export interface WlanForgetRequest {
   uuid?: string
   connection_id?: string
+}
+
+export interface AutomationConfig {
+  enabled: boolean
+  tasks: AutomationTask[]
+}
+
+export type AutomationTrigger =
+  | { type: 'fixed'; config: { weekdays: number[]; times: string[] } }
+  | { type: 'interval'; config: { interval_value: number; interval_unit: string } }
+
+export type AutomationAction =
+  | { type: 'restart_baseband'; config: null | Record<string, never> }
+  | { type: 'reboot_device'; config: { delay_seconds: number } }
+  | {
+      type: 'send_sms'
+      config: {
+        phone_number: string
+        content: string
+        random_delay_seconds?: number
+        retry_limit?: number
+      }
+    }
+
+export interface AutomationTask {
+  id: string
+  name: string
+  enabled: boolean
+  trigger: AutomationTrigger
+  action: AutomationAction
+}
+
+export interface AutomationLogEntry {
+  id: number
+  task_id: string
+  task_name: string
+  task_type: string
+  status: string
+  detail: string
+  created_at: string
+}
+
+export interface AutomationLogsResponse {
+  logs: AutomationLogEntry[]
+  total: number
 }

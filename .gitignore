@@ -26,5 +26,6 @@ release/*
 userdata/home/root/simadmin
 userdata/home/root/www/
 
-
+# 临时目录
+temp/
 .device-dump/

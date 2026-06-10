@@ -2986,7 +2986,7 @@ pub async fn system_reboot(
     )
 }
 
-async fn run_safe_os_reboot_sequence(
+pub async fn run_safe_os_reboot_sequence(
     delay_seconds: u32,
     system_events: Arc<crate::system_event::SystemEventEmitter>,
 ) {
@@ -3509,6 +3509,208 @@ pub async fn cancel_ota_handler() -> impl IntoResponse {
             ))),
         ),
     }
+}
+
+fn default_log_limit() -> i64 {
+    100
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AutomationLogQuery {
+    #[serde(default, rename = "type")]
+    pub task_type: String,
+    #[serde(default)]
+    pub status: String,
+    #[serde(default)]
+    pub q: String,
+    #[serde(default)]
+    pub start_date: String,
+    #[serde(default)]
+    pub end_date: String,
+    #[serde(default = "default_log_limit")]
+    pub limit: i64,
+    #[serde(default)]
+    pub offset: i64,
+}
+
+#[derive(Debug, Deserialize, Default)]
+pub struct AutomationLogClearRequest {
+    #[serde(default, rename = "type")]
+    pub task_type: String,
+    #[serde(default)]
+    pub status: String,
+    #[serde(default)]
+    pub start_date: String,
+    #[serde(default)]
+    pub end_date: String,
+}
+
+/// GET /api/automation/config
+pub async fn get_automation_config_handler(
+    State(config_manager): State<Arc<ConfigManager>>,
+) -> (
+    StatusCode,
+    Json<ApiResponse<crate::config::AutomationConfig>>,
+) {
+    let config = config_manager.get_automation_config();
+    (
+        StatusCode::OK,
+        Json(ApiResponse::success_with_message("Success", config)),
+    )
+}
+
+/// POST /api/automation/config
+pub async fn set_automation_config_handler(
+    State(config_manager): State<Arc<ConfigManager>>,
+    Json(config): Json<crate::config::AutomationConfig>,
+) -> (StatusCode, Json<ApiResponse<serde_json::Value>>) {
+    match config_manager.set_automation_config(config) {
+        Ok(_) => (
+            StatusCode::OK,
+            Json(ApiResponse::success_with_message(
+                "Automation config updated",
+                json!({}),
+            )),
+        ),
+        Err(e) => (
+            StatusCode::OK,
+            Json(ApiResponse::error(format!("Failed: {}", e))),
+        ),
+    }
+}
+
+/// GET /api/automation/logs
+pub async fn get_automation_logs_handler(
+    Query(query): Query<AutomationLogQuery>,
+    State(database): State<Arc<Database>>,
+) -> (
+    StatusCode,
+    Json<ApiResponse<crate::db::AutomationLogsResponse>>,
+) {
+    match database.get_automation_logs(
+        &query.task_type,
+        &query.status,
+        &query.q,
+        &query.start_date,
+        &query.end_date,
+        query.limit,
+        query.offset,
+    ) {
+        Ok(logs) => (
+            StatusCode::OK,
+            Json(ApiResponse::success_with_message("Success", logs)),
+        ),
+        Err(err) => (
+            StatusCode::OK,
+            Json(ApiResponse::error(format!("Failed: {}", err))),
+        ),
+    }
+}
+
+/// POST /api/automation/logs/clear
+pub async fn clear_automation_logs_handler(
+    State(database): State<Arc<Database>>,
+    payload: Option<Json<AutomationLogClearRequest>>,
+) -> (StatusCode, Json<ApiResponse<serde_json::Value>>) {
+    let filters = payload.map(|Json(value)| value).unwrap_or_default();
+    match database.clear_automation_logs(
+        &filters.task_type,
+        &filters.status,
+        &filters.start_date,
+        &filters.end_date,
+    ) {
+        Ok(deleted) => (
+            StatusCode::OK,
+            Json(ApiResponse::success_with_message(
+                "Automation logs cleared",
+                json!({ "deleted": deleted }),
+            )),
+        ),
+        Err(err) => (
+            StatusCode::OK,
+            Json(ApiResponse::error(format!("Failed: {}", err))),
+        ),
+    }
+}
+
+/// POST /api/automation/test/{task_id}
+pub async fn test_automation_task_handler(
+    Path(task_id): Path<String>,
+    State(app_state): State<AppState>,
+) -> (StatusCode, Json<ApiResponse<serde_json::Value>>) {
+    let config = app_state.config_manager.get_automation_config();
+    let task = config.tasks.iter().find(|t| t.id == task_id).cloned();
+    
+    let Some(task) = task else {
+        return (
+            StatusCode::OK,
+            Json(ApiResponse::error("自动化任务不存在")),
+        );
+    };
+
+    tokio::spawn(async move {
+        let registry = crate::automation::tasks::TaskRegistry::new();
+        let task_type = match &task.action {
+            crate::config::AutomationAction::RestartBaseband => "restart_baseband",
+            crate::config::AutomationAction::RebootDevice { .. } => "reboot_device",
+            crate::config::AutomationAction::SendSms { .. } => "send_sms",
+        };
+
+        let handler = match registry.get(task_type) {
+            Some(h) => h,
+            None => {
+                let err_msg = format!("未找到该任务类型的处理器: {}", task_type);
+                let _ = app_state.database.insert_automation_log(&task.id, &task.name, task_type, "failed", &err_msg);
+                return;
+            }
+        };
+
+        let mut delay_secs = 0u64;
+        let params = match &task.action {
+            crate::config::AutomationAction::RestartBaseband => serde_json::Value::Null,
+            crate::config::AutomationAction::RebootDevice { delay_seconds } => {
+                serde_json::json!({ "delay_seconds": delay_seconds })
+            }
+            crate::config::AutomationAction::SendSms { phone_number, content, random_delay_seconds, retry_limit } => {
+                delay_secs = u64::from(random_delay_seconds.unwrap_or(0));
+                serde_json::json!({
+                    "phone_number": phone_number,
+                    "content": content,
+                    "random_delay_seconds": random_delay_seconds,
+                    "retry_limit": retry_limit
+                })
+            }
+        };
+
+        let result = tokio::time::timeout(
+            tokio::time::Duration::from_secs(60 + delay_secs),
+            handler.execute(&app_state, &params)
+        ).await;
+
+        let (status, detail) = match result {
+            Ok(Ok(_)) => ("success", "执行成功".to_string()),
+            Ok(Err(e)) => ("failed", format!("执行失败: {}", e)),
+            Err(_) => ("failed", "执行超时 (超过60秒限制)".to_string()),
+        };
+
+        let _ = app_state.database.insert_automation_log(&task.id, &task.name, task_type, status, &detail);
+
+        let event = crate::notification::AutomationEvent {
+            task_id: task.id.clone(),
+            task_name: task.name.clone(),
+            task_type: task_type.to_string(),
+            status: status.to_string(),
+            message: detail.clone(),
+            timestamp: crate::db::beijing_sms_now_string(),
+        };
+
+        let _ = app_state.notification_sender.forward_automation_event(&event).await;
+    });
+
+    (
+        StatusCode::OK,
+        Json(ApiResponse::success_with_message("任务已在后台下发立即执行", json!({}))),
+    )
 }
 
 #[cfg(test)]

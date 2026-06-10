@@ -3,6 +3,8 @@ import type {
   AirplaneModeResponse,
   ApiResponse,
   ApnListResponse,
+  AutomationConfig,
+  AutomationLogsResponse,
   AuthSettingsResponse,
   AuthStatusResponse,
   BandLockRequest,
@@ -814,6 +816,43 @@ class SimAdminCurrentAPI {
   async cancelOta() {
     return request<ApiResponse<Record<string, unknown>>>('/ota/cancel', {
       method: 'POST',
+    })
+  }
+
+  async getAutomationConfig() {
+    return request<ApiResponse<AutomationConfig>>('/automation/config')
+  }
+
+  async setAutomationConfig(config: AutomationConfig) {
+    return request<ApiResponse<Record<string, unknown>>>('/automation/config', {
+      method: 'POST',
+      body: JSON.stringify(config),
+    })
+  }
+
+  async testAutomationTask(taskId: string) {
+    return request<ApiResponse<Record<string, unknown>>>(`/automation/test/${encodeURIComponent(taskId)}`, {
+      method: 'POST',
+    })
+  }
+
+  async getAutomationLogs(params?: { type?: string; status?: string; start_date?: string; end_date?: string; q?: string; limit?: number; offset?: number }) {
+    const query = new URLSearchParams()
+    if (params?.type) query.append('type', params.type)
+    if (params?.status) query.append('status', params.status)
+    if (params?.q) query.append('q', params.q)
+    if (params?.start_date) query.append('start_date', params.start_date)
+    if (params?.end_date) query.append('end_date', params.end_date)
+    if (params?.limit) query.append('limit', params.limit.toString())
+    if (params?.offset) query.append('offset', params.offset.toString())
+    const queryStr = query.toString() ? `?${query.toString()}` : ''
+    return request<ApiResponse<AutomationLogsResponse>>(`/automation/logs${queryStr}`)
+  }
+
+  async clearAutomationLogs(filters?: { type?: string; status?: string; start_date?: string; end_date?: string }) {
+    return request<ApiResponse<{ deleted: number }>>('/automation/logs/clear', {
+      method: 'POST',
+      body: JSON.stringify(filters ?? {}),
     })
   }
 }

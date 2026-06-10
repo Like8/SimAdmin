@@ -641,7 +641,7 @@ export default function EsimManagerPage() {
       { time: '[00:01]', text: '检索设备底座 lpac 私有环境可执行配置...', type: 'info' },
     ])
 
-    let timer: number
+    let timer: number | undefined = undefined
     const startProgressSim = () => {
       let currentProgress = 5
       timer = window.setInterval(() => {

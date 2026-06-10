@@ -244,6 +244,7 @@ pub enum NotificationEventType {
     VersionUpdate,
     SystemEvent,
     DeviceStatus,
+    Automation,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -469,11 +470,11 @@ fn default_notification_log_max_entries() -> u32 {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NotificationLogCleanupConfig {
-    #[serde(default)]
+    #[serde(default = "default_true")]
     pub retention_days_enabled: bool,
     #[serde(default = "default_notification_log_retention_days")]
     pub retention_days: u32,
-    #[serde(default)]
+    #[serde(default = "default_true")]
     pub max_entries_enabled: bool,
     #[serde(default = "default_notification_log_max_entries")]
     pub max_entries: u32,
@@ -482,9 +483,9 @@ pub struct NotificationLogCleanupConfig {
 impl Default for NotificationLogCleanupConfig {
     fn default() -> Self {
         Self {
-            retention_days_enabled: false,
+            retention_days_enabled: true,
             retention_days: default_notification_log_retention_days(),
-            max_entries_enabled: false,
+            max_entries_enabled: true,
             max_entries: default_notification_log_max_entries(),
         }
     }
@@ -1107,6 +1108,7 @@ fn push_legacy_rule(
             NotificationEventType::VersionUpdate => channel.forward_updates,
             NotificationEventType::SystemEvent => false,
             NotificationEventType::DeviceStatus => false,
+            NotificationEventType::Automation => false,
         })
         .collect::<Vec<_>>();
     if selected.is_empty() {
@@ -1121,6 +1123,7 @@ fn push_legacy_rule(
             NotificationEventType::VersionUpdate => channel.update_template.clone(),
             NotificationEventType::SystemEvent => String::new(),
             NotificationEventType::DeviceStatus => String::new(),
+            NotificationEventType::Automation => String::new(),
         })
         .unwrap_or_else(|| default_rule_template(event_type));
 
@@ -1188,6 +1191,9 @@ pub fn default_rule_template(event_type: NotificationEventType) -> String {
         NotificationEventType::DeviceStatus => {
             "设备状态报告\n【{{状态分类}}】\n{{状态内容}}\n\n时间: {{时间}}".to_string()
         }
+        NotificationEventType::Automation => {
+            "🤖 自动化事件通知\n任务名称: {{任务名称}}\n任务类型: {{任务类型}}\n执行状态: {{任务状态}}\n详情: {{任务详情}}\n时间: {{触发时间}}\n来源: {{本机号码}}".to_string()
+        }
     }
 }
 
@@ -1254,6 +1260,53 @@ impl Default for DdnsIpConfig {
             domains: Vec::new(),
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AutomationConfig {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(default)]
+    pub tasks: Vec<AutomationTask>,
+}
+
+impl Default for AutomationConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            tasks: Vec::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AutomationTask {
+    pub id: String,
+    pub name: String,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    pub trigger: AutomationTrigger,
+    pub action: AutomationAction,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", content = "config", rename_all = "snake_case")]
+pub enum AutomationTrigger {
+    Fixed { weekdays: Vec<u8>, times: Vec<String> },
+    Interval { interval_value: u64, interval_unit: String },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", content = "config", rename_all = "snake_case")]
+pub enum AutomationAction {
+    RestartBaseband,
+    RebootDevice { delay_seconds: u32 },
+    SendSms {
+        phone_number: String,
+        content: String,
+        random_delay_seconds: Option<u32>,
+        retry_limit: Option<u32>,
+    },
 }
 
 #[cfg(test)]
@@ -1453,6 +1506,8 @@ pub struct AppConfig {
     pub work_mode: WorkMode,
     #[serde(default)]
     pub esim: EsimConfig,
+    #[serde(default)]
+    pub automation: AutomationConfig,
 }
 
 impl Default for AppConfig {
@@ -1468,6 +1523,7 @@ impl Default for AppConfig {
             apn: ApnConfig::default(),
             work_mode: WorkMode::default(),
             esim: EsimConfig::default(),
+            automation: AutomationConfig::default(),
         }
     }
 }
@@ -1533,6 +1589,20 @@ impl ConfigManager {
     /// 获取通知配置
     pub fn get_notifications(&self) -> NotificationConfig {
         self.config.read().unwrap().notifications.clone()
+    }
+
+    /// 获取自动化配置
+    pub fn get_automation_config(&self) -> AutomationConfig {
+        self.config.read().unwrap().automation.clone()
+    }
+
+    /// 更新自动化配置
+    pub fn set_automation_config(&self, automation: AutomationConfig) -> Result<(), String> {
+        {
+            let mut config = self.config.write().unwrap();
+            config.automation = automation;
+        }
+        self.save()
     }
 
     pub fn get_roaming_allowed(&self) -> bool {

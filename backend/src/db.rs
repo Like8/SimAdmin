@@ -67,6 +67,23 @@ pub struct NotificationLogsResponse {
     pub total: i64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AutomationLogEntry {
+    pub id: i64,
+    pub task_id: String,
+    pub task_name: String,
+    pub task_type: String,
+    pub status: String,
+    pub detail: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct AutomationLogsResponse {
+    pub logs: Vec<AutomationLogEntry>,
+    pub total: i64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct NotificationStatusCounts {
     pub success: i64,
@@ -529,6 +546,25 @@ impl Database {
 
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_auth_sessions_expires_at ON auth_sessions(expires_at)",
+            [],
+        )?;
+
+        // 创建自动化运行日志表
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS automation_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                task_id TEXT NOT NULL,
+                task_name TEXT NOT NULL,
+                task_type TEXT NOT NULL,
+                status TEXT NOT NULL,
+                detail TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )",
+            [],
+        )?;
+
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_automation_logs_created_at ON automation_logs(created_at DESC)",
             [],
         )?;
 
@@ -1794,5 +1830,199 @@ impl Database {
         let conn = self.conn.lock().unwrap();
         conn.execute("DELETE FROM call_history", [])?;
         Ok(())
+    }
+
+    // ==================== 自动化运行日志相关方法 ====================
+
+    /// 插入新自动化执行日志
+    pub fn insert_automation_log(
+        &self,
+        task_id: &str,
+        task_name: &str,
+        task_type: &str,
+        status: &str,
+        detail: &str,
+    ) -> Result<i64> {
+        let conn = self.conn.lock().unwrap();
+        let created_at = beijing_sms_now_string();
+        conn.execute(
+            "INSERT INTO automation_logs (task_id, task_name, task_type, status, detail, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![task_id, task_name, task_type, status, detail, created_at],
+        )?;
+        Ok(conn.last_insert_rowid())
+    }
+
+    /// 获取自动化执行日志（分页与过滤）
+    pub fn get_automation_logs(
+        &self,
+        task_type: &str,
+        status: &str,
+        query: &str,
+        start_date: &str,
+        end_date: &str,
+        limit: i64,
+        offset: i64,
+    ) -> Result<AutomationLogsResponse> {
+        let conn = self.conn.lock().unwrap();
+        let limit = limit.clamp(1, 200);
+        let offset = offset.max(0);
+        let task_type = task_type.trim();
+        let status = status.trim();
+        let query = query.trim();
+        
+        let start_at = notification_log_start_bound(start_date);
+        let end_at = notification_log_end_bound(end_date);
+
+        let total = conn.query_row(
+            "SELECT COUNT(*) FROM automation_logs
+             WHERE (?1 = '' OR task_type = ?1)
+               AND (?2 = '' OR status = ?2)
+               AND (
+                    ?3 = ''
+                    OR task_name LIKE '%' || ?3 || '%'
+                    OR detail LIKE '%' || ?3 || '%'
+               )
+               AND (?4 = '' OR created_at >= ?4)
+               AND (?5 = '' OR created_at <= ?5)",
+            params![task_type, status, query, start_at, end_at],
+            |row| row.get(0),
+        )?;
+
+        let mut stmt = conn.prepare(
+            "SELECT id, task_id, task_name, task_type, status, detail, created_at
+             FROM automation_logs
+             WHERE (?1 = '' OR task_type = ?1)
+               AND (?2 = '' OR status = ?2)
+               AND (
+                    ?3 = ''
+                    OR task_name LIKE '%' || ?3 || '%'
+                    OR detail LIKE '%' || ?3 || '%'
+               )
+               AND (?4 = '' OR created_at >= ?4)
+               AND (?5 = '' OR created_at <= ?5)
+             ORDER BY created_at DESC
+             LIMIT ?6 OFFSET ?7",
+        )?;
+
+        let rows = stmt.query_map(
+            params![task_type, status, query, start_at, end_at, limit, offset],
+            |row| {
+                let mut detail: String = row.get(5)?;
+                if detail == "执行成功 (0)" || detail.starts_with("执行成功 (0)") {
+                    detail = "执行成功".to_string();
+                }
+                Ok(AutomationLogEntry {
+                    id: row.get(0)?,
+                    task_id: row.get(1)?,
+                    task_name: row.get(2)?,
+                    task_type: row.get(3)?,
+                    status: row.get(4)?,
+                    detail,
+                    created_at: row.get(6)?,
+                })
+            },
+        )?;
+
+        let mut logs = Vec::new();
+        for row in rows {
+            logs.push(row?);
+        }
+
+        Ok(AutomationLogsResponse { logs, total })
+    }
+
+    /// 获取特定任务的最后一次运行日志
+    pub fn get_last_log_for_task(&self, task_id: &str) -> Result<Option<AutomationLogEntry>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, task_id, task_name, task_type, status, detail, created_at
+             FROM automation_logs
+             WHERE task_id = ?1
+             ORDER BY created_at DESC
+             LIMIT 1",
+        )?;
+        let mut rows = stmt.query_map(params![task_id], |row| {
+            let mut detail: String = row.get(5)?;
+            if detail == "执行成功 (0)" || detail.starts_with("执行成功 (0)") {
+                detail = "执行成功".to_string();
+            }
+            Ok(AutomationLogEntry {
+                id: row.get(0)?,
+                task_id: row.get(1)?,
+                task_name: row.get(2)?,
+                task_type: row.get(3)?,
+                status: row.get(4)?,
+                detail,
+                created_at: row.get(6)?,
+            })
+        })?;
+        if let Some(row) = rows.next() {
+            Ok(Some(row?))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// 清理过滤的日志
+    pub fn clear_automation_logs(
+        &self,
+        task_type: &str,
+        status: &str,
+        start_date: &str,
+        end_date: &str,
+    ) -> Result<usize> {
+        let conn = self.conn.lock().unwrap();
+        let task_type = task_type.trim();
+        let status = status.trim();
+        
+        let start_at = notification_log_start_bound(start_date);
+        let end_at = notification_log_end_bound(end_date);
+
+        conn.execute(
+            "DELETE FROM automation_logs
+             WHERE (?1 = '' OR task_type = ?1)
+               AND (?2 = '' OR status = ?2)
+               AND (?3 = '' OR created_at >= ?3)
+               AND (?4 = '' OR created_at <= ?4)",
+            params![task_type, status, start_at, end_at],
+        )
+    }
+
+    /// 自动保留策略清理
+    pub fn cleanup_automation_logs(
+        &self,
+        retention_days: Option<u32>,
+        max_entries: Option<u32>,
+    ) -> Result<usize> {
+        let conn = self.conn.lock().unwrap();
+        let mut deleted = 0usize;
+
+        if let Some(days) = retention_days.filter(|days| *days > 0) {
+            let cutoff = Utc::now()
+                .with_timezone(&beijing_offset())
+                .checked_sub_signed(Duration::days(i64::from(days)))
+                .unwrap_or_else(|| Utc::now().with_timezone(&beijing_offset()))
+                .format(SMS_TIMESTAMP_FORMAT)
+                .to_string();
+            deleted += conn.execute(
+                "DELETE FROM automation_logs WHERE created_at < ?1",
+                params![cutoff],
+            )?;
+        }
+
+        if let Some(max_entries) = max_entries.filter(|max_entries| *max_entries > 0) {
+            deleted += conn.execute(
+                "DELETE FROM automation_logs
+                 WHERE id NOT IN (
+                    SELECT id FROM automation_logs
+                    ORDER BY id DESC
+                    LIMIT ?1
+                 )",
+                params![i64::from(max_entries)],
+            )?;
+        }
+
+        Ok(deleted)
     }
 }

@@ -24,6 +24,7 @@ import {
   SystemUpdateAlt as OtaIcon,
   Router as RouterIcon,
   SimCard as EsimIcon,
+  AutoMode as AutomationIcon,
 } from '@mui/icons-material'
 import { useWorkMode } from '../../contexts/WorkModeContext'
 
@@ -46,6 +47,7 @@ const baseMenuItems = [
   { path: '/sms', label: '短信管理', icon: SmsIcon },
   // { path: '/phone', label: '电话管理', icon: PhoneIcon },
   { path: '/notifications', label: '通知中心', icon: NotificationsIcon },
+  { path: '/automation', label: '自动化中心', icon: AutomationIcon },
   { path: '/config', label: '系统配置', icon: SettingsIcon },
   { path: '/ota', label: 'OTA 更新', icon: OtaIcon },
 ]
@@ -160,7 +162,7 @@ export default function Sidebar({
                   transition: `width ${SIDEBAR_TRANSITION}, min-width ${SIDEBAR_TRANSITION}`,
                 }}
               >
-                <IconComponent />
+                <IconComponent sx={item.path === '/automation' ? { fontSize: 22 } : undefined} />
               </ListItemIcon>
               <ListItemText
                 primary={item.label}

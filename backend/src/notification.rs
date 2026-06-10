@@ -21,7 +21,7 @@ use percent_encoding::{utf8_percent_encode, NON_ALPHANUMERIC};
 use reqwest::{Client, StatusCode};
 use ring::hmac;
 use serde::de::DeserializeOwned;
-use serde::Deserialize;
+use serde::{Serialize, Deserialize};
 use serde_json::{json, Map, Value};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -80,6 +80,16 @@ enum ChannelDeliveryResult {
     Queued(String),
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AutomationEvent {
+    pub task_id: String,
+    pub task_name: String,
+    pub task_type: String,
+    pub status: String,
+    pub message: String,
+    pub timestamp: String,
+}
+
 enum NotificationEvent<'a> {
     Sms {
         message: &'a SmsMessage,
@@ -89,6 +99,7 @@ enum NotificationEvent<'a> {
     VersionUpdate(&'a VersionUpdateEvent),
     SystemEvent(&'a SystemEvent),
     DeviceStatus(&'a DeviceStatusReport),
+    Automation(&'a AutomationEvent, String),
 }
 
 impl NotificationEvent<'_> {
@@ -99,6 +110,7 @@ impl NotificationEvent<'_> {
             NotificationEvent::VersionUpdate(_) => NotificationEventType::VersionUpdate,
             NotificationEvent::SystemEvent(_) => NotificationEventType::SystemEvent,
             NotificationEvent::DeviceStatus(_) => NotificationEventType::DeviceStatus,
+            NotificationEvent::Automation(..) => NotificationEventType::Automation,
         }
     }
 
@@ -111,6 +123,9 @@ impl NotificationEvent<'_> {
                 format!("SimAdmin 系统事件 - {}", event.event_label)
             }
             NotificationEvent::DeviceStatus(_) => "SimAdmin 设备状态".to_string(),
+            NotificationEvent::Automation(event, _) => {
+                format!("SimAdmin 自动化 - {}", event.task_name)
+            }
         }
     }
 
@@ -134,6 +149,9 @@ impl NotificationEvent<'_> {
                 event.event_label, event.status_label, event.message
             )),
             NotificationEvent::DeviceStatus(_) => "设备状态定时报表".to_string(),
+            NotificationEvent::Automation(event, _) => {
+                compact_summary(&format!("[{}] {}", event.task_name, event.message))
+            }
         }
     }
 
@@ -187,6 +205,16 @@ impl NotificationEvent<'_> {
                 "timestamp" => report.timestamp.clone(),
                 _ => self.summary(),
             },
+            NotificationEvent::Automation(event, own_number) => match field {
+                "task_id" => event.task_id.clone(),
+                "task_name" => event.task_name.clone(),
+                "task_type" => event.task_type.clone(),
+                "status" => event.status.clone(),
+                "message" => event.message.clone(),
+                "timestamp" => event.timestamp.clone(),
+                "own_number" => own_number.clone(),
+                _ => self.summary(),
+            },
         }
     }
 
@@ -209,6 +237,9 @@ impl NotificationEvent<'_> {
             }
             NotificationEvent::DeviceStatus(report) => {
                 render_device_status_template(&template, report, false)
+            }
+            NotificationEvent::Automation(event, own_number) => {
+                render_automation_template(&template, event, own_number, false)
             }
         }
     }
@@ -314,6 +345,19 @@ impl NotificationSender {
     /// Forward a DDNS update/failure event to all enabled channels.
     pub async fn forward_ddns_event(&self, event: &DdnsEvent) -> Result<(), String> {
         let event = NotificationEvent::Ddns(event);
+        let result = self.route_event(&event).await;
+
+        if result.errors.is_empty() || result.delivered {
+            Ok(())
+        } else {
+            Err(result.errors.join("; "))
+        }
+    }
+
+    /// Forward an automation task execution event to all enabled channels.
+    pub async fn forward_automation_event(&self, event: &AutomationEvent) -> Result<(), String> {
+        let own_number = self.get_own_number().await;
+        let event = NotificationEvent::Automation(event, own_number);
         let result = self.route_event(&event).await;
 
         if result.errors.is_empty() || result.delivered {
@@ -444,6 +488,12 @@ impl NotificationSender {
         }) {
             if !rule_matches(rule, event) {
                 continue;
+            }
+            if let NotificationEvent::Automation(auto_event, _) = event {
+                let match_code = format!("{}:{}", auto_event.task_type, auto_event.status);
+                if !rule.event_codes.contains(&match_code) {
+                    continue;
+                }
             }
             matched_rules += 1;
 
@@ -2207,6 +2257,7 @@ fn notification_event_type_key(event_type: NotificationEventType) -> &'static st
         NotificationEventType::VersionUpdate => "version_update",
         NotificationEventType::SystemEvent => "system_event",
         NotificationEventType::DeviceStatus => "device_status",
+        NotificationEventType::Automation => "automation",
     }
 }
 
@@ -2218,6 +2269,7 @@ impl NotificationEventType {
             NotificationEventType::VersionUpdate => "版本更新",
             NotificationEventType::SystemEvent => "系统事件",
             NotificationEventType::DeviceStatus => "设备状态",
+            NotificationEventType::Automation => "自动化中心",
         }
     }
 }
@@ -2430,6 +2482,14 @@ fn render_ddns_template(template: &str, event: &DdnsEvent, escape_json: bool) ->
         .replace("{{更新时间}}", &timestamp)
 }
 
+fn replace_own_number(template: String, own_number: &str) -> String {
+    template
+        .replace("{{own_number}}", own_number)
+        .replace("{{local_phone_number}}", own_number)
+        .replace("{{self_phone_number}}", own_number)
+        .replace("{{本机号码}}", own_number)
+}
+
 fn render_version_update_template(
     template: &str,
     event: &VersionUpdateEvent,
@@ -2463,7 +2523,7 @@ fn render_version_update_template(
     let timestamp = maybe_escape(&timestamp_value);
     let own_number = maybe_escape(&event.own_number);
 
-    template
+    let rendered = template
         .replace("{{asset_name}}", &asset_name)
         .replace("{{file_name}}", &asset_name)
         .replace("{{firmware_name}}", &asset_name)
@@ -2488,11 +2548,8 @@ fn render_version_update_template(
         .replace("{{二进制MD5}}", &binary_md5)
         .replace("{{前端MD5}}", &frontend_md5)
         .replace("{{发布地址}}", &release_url)
-        .replace("{{发布时间}}", &timestamp)
-        .replace("{{own_number}}", &own_number)
-        .replace("{{local_phone_number}}", &own_number)
-        .replace("{{self_phone_number}}", &own_number)
-        .replace("{{本机号码}}", &own_number)
+        .replace("{{发布时间}}", &timestamp);
+    replace_own_number(rendered, &own_number)
 }
 
 fn render_system_event_template(template: &str, event: &SystemEvent, escape_json: bool) -> String {
@@ -2540,6 +2597,60 @@ fn render_system_event_template(template: &str, event: &SystemEvent, escape_json
         .replace("{{对象}}", &entity)
         .replace("{{消息}}", &message)
         .replace("{{时间}}", &timestamp)
+}
+
+fn render_automation_template(
+    template: &str,
+    event: &AutomationEvent,
+    own_number: &str,
+    escape_json: bool,
+) -> String {
+    let maybe_escape = |value: &str| {
+        if escape_json {
+            escape_json_string(value)
+        } else {
+            value.to_string()
+        }
+    };
+    
+    let task_id = maybe_escape(&event.task_id);
+    let task_name = maybe_escape(&event.task_name);
+    
+    let task_type_label = match event.task_type.as_str() {
+        "restart_baseband" => "重启基带",
+        "reboot_device" => "重启设备",
+        "send_sms" => "发送短信",
+        other => other,
+    };
+    let task_type = maybe_escape(task_type_label);
+    
+    let status_label = match event.status.as_str() {
+        "success" => "成功",
+        "failed" => "失败",
+        other => other,
+    };
+    let status = maybe_escape(status_label);
+    
+    let message = maybe_escape(&event.message);
+    let timestamp = maybe_escape(&event.timestamp);
+    let own_number = maybe_escape(own_number);
+
+    let rendered = template
+        .replace("{{task_id}}", &task_id)
+        .replace("{{task_name}}", &task_name)
+        .replace("{{任务名称}}", &task_name)
+        .replace("{{task_type}}", &task_type)
+        .replace("{{任务类型}}", &task_type)
+        .replace("{{status}}", &status)
+        .replace("{{任务状态}}", &status)
+        .replace("{{执行状态}}", &status)
+        .replace("{{message}}", &message)
+        .replace("{{任务详情}}", &message)
+        .replace("{{详情}}", &message)
+        .replace("{{timestamp}}", &timestamp)
+        .replace("{{触发时间}}", &timestamp)
+        .replace("{{时间}}", &timestamp);
+    replace_own_number(rendered, &own_number)
 }
 
 fn render_device_status_template(
@@ -2759,16 +2870,12 @@ fn render_sms_template(
     let timestamp = render_time_value(&message.timestamp, escape_json);
     let verification_code = extract_verification_code(&message.content).unwrap_or_default();
 
-    template
+    let rendered = template
         .replace("{{id}}", &message.id.to_string())
         .replace("{{phone_number}}", &message.phone_number)
         .replace("{{发送方号码}}", &message.phone_number)
         .replace("{{发送方}}", &message.phone_number)
         .replace("{{发件人}}", &message.phone_number)
-        .replace("{{own_number}}", &own_number)
-        .replace("{{local_phone_number}}", &own_number)
-        .replace("{{self_phone_number}}", &own_number)
-        .replace("{{本机号码}}", &own_number)
         .replace("{{content}}", &content)
         .replace("{{内容}}", &content)
         .replace("{{短信内容}}", &content)
@@ -2787,7 +2894,8 @@ fn render_sms_template(
         .replace("{{time}}", &timestamp)
         .replace("{{carrier}}", &carrier)
         .replace("{{operator}}", &carrier)
-        .replace("{{运营商}}", &carrier)
+        .replace("{{运营商}}", &carrier);
+    replace_own_number(rendered, &own_number)
 }
 
 fn format_own_numbers_for_template(numbers: &[String]) -> String {

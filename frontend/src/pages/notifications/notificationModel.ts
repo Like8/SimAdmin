@@ -100,6 +100,7 @@ export const EVENT_TYPES: { key: NotificationEventType; label: string }[] = [
   { key: 'version_update', label: '版本更新' },
   { key: 'system_event', label: '系统事件' },
   { key: 'device_status', label: '设备状态' },
+  { key: 'automation', label: '自动化事件' },
 ]
 
 export const WEEKDAYS = [
@@ -145,6 +146,7 @@ export const MATCH_FIELDS: Record<NotificationEventType, { value: string; label:
   ],
   system_event: [],
   device_status: [],
+  automation: [],
 }
 
 export const DEFAULT_TEMPLATES: Record<NotificationEventType, string> = {
@@ -153,6 +155,7 @@ export const DEFAULT_TEMPLATES: Record<NotificationEventType, string> = {
   version_update: '🚀 SimAdmin 发现新版本\n固件包: {{固件包}}\n版本号: {{版本号}}\nCommit: {{Commit}}\n构建时间: {{构建时间}}\nMD5: {{MD5}}\n来源: {{本机号码}}',
   system_event: DEFAULT_SYSTEM_EVENT_TEMPLATE,
   device_status: DEFAULT_DEVICE_STATUS_TEMPLATE,
+  automation: '🤖 自动化事件通知\n任务名称: {{任务名称}}\n任务类型: {{任务类型}}\n执行状态: {{任务状态}}\n详情: {{任务详情}}\n时间: {{触发时间}}\n来源: {{本机号码}}',
 }
 
 export const TEMPLATE_VARIABLES: Record<NotificationEventType, TemplateVariable[]> = {
@@ -188,6 +191,14 @@ export const TEMPLATE_VARIABLES: Record<NotificationEventType, TemplateVariable[
   ],
   system_event: SYSTEM_EVENT_TEMPLATE_VARIABLES,
   device_status: DEVICE_STATUS_TEMPLATE_VARIABLES,
+  automation: [
+    { label: '任务名称', token: '{{任务名称}}' },
+    { label: '任务类型', token: '{{任务类型}}' },
+    { label: '任务状态', token: '{{任务状态}}' },
+    { label: '任务详情', token: '{{任务详情}}' },
+    { label: '触发时间', token: '{{触发时间}}' },
+    { label: '本机号码', token: '{{本机号码}}' },
+  ],
 }
 
 export function createDefaultConfig(): NotificationConfig {
@@ -329,6 +340,15 @@ export function createChannel(type: NotificationChannelKey): NotificationChannel
   }
 }
 
+export function defaultAutomationEventCodes(): string[] {
+  return [
+    'restart_baseband:success',
+    'restart_baseband:failed',
+    'send_sms:success',
+    'send_sms:failed',
+  ]
+}
+
 export function createRule(type: NotificationEventType, channelIds: string[]): NotificationRule {
   return {
     id: newId(`rule-${type}`),
@@ -337,7 +357,7 @@ export function createRule(type: NotificationEventType, channelIds: string[]): N
     enabled: true,
     matcher: { field: 'summary', operator: 'always', value: '' },
     channel_ids: channelIds,
-    event_codes: type === 'system_event' ? defaultSystemEventCodes() : [],
+    event_codes: type === 'system_event' ? defaultSystemEventCodes() : type === 'automation' ? defaultAutomationEventCodes() : [],
     device_status_items: type === 'device_status' ? defaultDeviceStatusItems() : [],
     device_status_schedule: { mode: 'fixed', interval_minutes: 1440, weekdays: [1, 2, 3, 4, 5, 6, 7], times: ['09:00'] },
     device_status_sms_period: 'last_24h',
