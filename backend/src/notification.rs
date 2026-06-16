@@ -21,7 +21,7 @@ use percent_encoding::{utf8_percent_encode, NON_ALPHANUMERIC};
 use reqwest::{Client, StatusCode};
 use ring::hmac;
 use serde::de::DeserializeOwned;
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -279,14 +279,16 @@ impl NotificationSender {
     async fn sms_template_context(&self) -> SmsTemplateContext {
         let own_number = self.get_own_number().await;
 
-        let carrier =
-            crate::modem_manager::get_network_info_data(self.dbus_conn.as_ref())
-                .await
-                .ok()
-                .map(|net| net.operator_name)
-                .unwrap_or_default();
+        let carrier = crate::modem_manager::get_network_info_data(self.dbus_conn.as_ref())
+            .await
+            .ok()
+            .map(|net| net.operator_name)
+            .unwrap_or_default();
 
-        SmsTemplateContext { own_number, carrier }
+        SmsTemplateContext {
+            own_number,
+            carrier,
+        }
     }
 
     /// Forward an incoming SMS to all enabled channels.
@@ -2601,10 +2603,10 @@ fn render_automation_template(
             value.to_string()
         }
     };
-    
+
     let task_id = maybe_escape(&event.task_id);
     let task_name = maybe_escape(&event.task_name);
-    
+
     let task_type_label = match event.task_type.as_str() {
         "restart_baseband" => "重启基带",
         "reboot_device" => "重启设备",
@@ -2612,14 +2614,14 @@ fn render_automation_template(
         other => other,
     };
     let task_type = maybe_escape(task_type_label);
-    
+
     let status_label = match event.status.as_str() {
         "success" => "成功",
         "failed" => "失败",
         other => other,
     };
     let status = maybe_escape(status_label);
-    
+
     let message = maybe_escape(&event.message);
     let timestamp = maybe_escape(&event.timestamp);
     let own_number = maybe_escape(own_number);
@@ -3050,6 +3052,7 @@ mod tests {
             timestamp: "2026-05-23 18:30:12".to_string(),
             status: "received".to_string(),
             pdu: None,
+            transport: "modem".to_string(),
         };
         let context = SmsTemplateContext::default();
         let event = NotificationEvent::Sms {
@@ -3155,6 +3158,7 @@ mod tests {
             timestamp: "2026-05-14T16:30:45Z".to_string(),
             status: "received".to_string(),
             pdu: None,
+            transport: "modem".to_string(),
         };
         let context = SmsTemplateContext::default();
 
@@ -3174,6 +3178,7 @@ mod tests {
             timestamp: "2026-05-14T16:30:45Z".to_string(),
             status: "received".to_string(),
             pdu: None,
+            transport: "modem".to_string(),
         };
         let context = SmsTemplateContext {
             own_number: "+10001".to_string(),
@@ -3201,6 +3206,7 @@ mod tests {
             timestamp: "2026-05-14T16:30:45Z".to_string(),
             status: "received".to_string(),
             pdu: None,
+            transport: "modem".to_string(),
         };
         let context = SmsTemplateContext {
             own_number: "+10001".to_string(),
@@ -3228,6 +3234,7 @@ mod tests {
             timestamp: "2026-05-14T16:30:45Z".to_string(),
             status: "received".to_string(),
             pdu: None,
+            transport: "modem".to_string(),
         };
         let context = SmsTemplateContext::default();
 

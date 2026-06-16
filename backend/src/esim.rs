@@ -16,8 +16,9 @@ use tokio::sync::Mutex;
 
 use crate::config::ConfigManager;
 use crate::models::{
-    EsimCommandResponse, EsimDownloadRequest, EsimEuiccInfo, EsimLpacRepairRequest, EsimLpacRepairResponse,
-    EsimLpacStatusResponse, EsimProfile, EsimProfilesResponse, WorkMode, WorkModeResponse,
+    EsimCommandResponse, EsimDownloadRequest, EsimEuiccInfo, EsimLpacRepairRequest,
+    EsimLpacRepairResponse, EsimLpacStatusResponse, EsimProfile, EsimProfilesResponse, WorkMode,
+    WorkModeResponse,
 };
 
 const ESIM_SHORT_TIMEOUT_SECS: u64 = 20;
@@ -926,13 +927,11 @@ async fn run_lpac_command(
 
     let value = match parsed_value {
         Some(val) => val,
-        None => {
-            serde_json::from_str::<Value>(&stdout).map_err(|err| {
-                EsimApiError::Command(format!(
-                    "Invalid JSON from lpac {action}: {err}; stdout: {stdout}"
-                ))
-            })?
-        }
+        None => serde_json::from_str::<Value>(&stdout).map_err(|err| {
+            EsimApiError::Command(format!(
+                "Invalid JSON from lpac {action}: {err}; stdout: {stdout}"
+            ))
+        })?,
     };
 
     Ok(normalize_lpac_response(

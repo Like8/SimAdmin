@@ -1292,15 +1292,23 @@ pub struct AutomationTask {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", content = "config", rename_all = "snake_case")]
 pub enum AutomationTrigger {
-    Fixed { weekdays: Vec<u8>, times: Vec<String> },
-    Interval { interval_value: u64, interval_unit: String },
+    Fixed {
+        weekdays: Vec<u8>,
+        times: Vec<String>,
+    },
+    Interval {
+        interval_value: u64,
+        interval_unit: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", content = "config", rename_all = "snake_case")]
 pub enum AutomationAction {
     RestartBaseband,
-    RebootDevice { delay_seconds: u32 },
+    RebootDevice {
+        delay_seconds: u32,
+    },
     SendSms {
         phone_number: String,
         content: String,
@@ -1361,6 +1369,49 @@ mod tests {
             .rules
             .iter()
             .any(|rule| rule.event_type == NotificationEventType::VersionUpdate));
+    }
+
+    #[test]
+    fn vowifi_config_defaults_to_quiet_mode() {
+        let config = AppConfig::default();
+
+        assert!(!config.vowifi.feature_enabled);
+        assert!(!config.vowifi.connection_enabled);
+        assert_eq!(config.vowifi.auto_restore_initial_delay_secs, 60);
+        assert_eq!(config.vowifi.auto_restore_attempts, 3);
+        assert_eq!(config.vowifi.auto_restore_retry_delay_secs, 30);
+    }
+
+    #[test]
+    fn vowifi_connection_intent_requires_feature_switch() {
+        let path = std::env::temp_dir().join(format!(
+            "simadmin-vowifi-config-{}-{}.json",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let manager = ConfigManager::new(path.clone());
+
+        assert_eq!(
+            manager.set_vowifi_connection_enabled(true).unwrap_err(),
+            "vowifi_feature_disabled"
+        );
+
+        let enabled = manager.set_vowifi_feature_enabled(true).unwrap();
+        assert!(enabled.feature_enabled);
+        assert!(!enabled.connection_enabled);
+
+        let connected = manager.set_vowifi_connection_enabled(true).unwrap();
+        assert!(connected.feature_enabled);
+        assert!(connected.connection_enabled);
+
+        let disabled = manager.set_vowifi_feature_enabled(false).unwrap();
+        assert!(!disabled.feature_enabled);
+        assert!(!disabled.connection_enabled);
+
+        let _ = std::fs::remove_file(path);
     }
 }
 
@@ -1485,6 +1536,44 @@ impl Default for EsimConfig {
     }
 }
 
+fn default_vowifi_auto_restore_initial_delay_secs() -> u64 {
+    60
+}
+
+fn default_vowifi_auto_restore_attempts() -> u8 {
+    3
+}
+
+fn default_vowifi_auto_restore_retry_delay_secs() -> u64 {
+    30
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct VowifiConfig {
+    #[serde(default)]
+    pub feature_enabled: bool,
+    #[serde(default)]
+    pub connection_enabled: bool,
+    #[serde(default = "default_vowifi_auto_restore_initial_delay_secs")]
+    pub auto_restore_initial_delay_secs: u64,
+    #[serde(default = "default_vowifi_auto_restore_attempts")]
+    pub auto_restore_attempts: u8,
+    #[serde(default = "default_vowifi_auto_restore_retry_delay_secs")]
+    pub auto_restore_retry_delay_secs: u64,
+}
+
+impl Default for VowifiConfig {
+    fn default() -> Self {
+        Self {
+            feature_enabled: false,
+            connection_enabled: false,
+            auto_restore_initial_delay_secs: default_vowifi_auto_restore_initial_delay_secs(),
+            auto_restore_attempts: default_vowifi_auto_restore_attempts(),
+            auto_restore_retry_delay_secs: default_vowifi_auto_restore_retry_delay_secs(),
+        }
+    }
+}
+
 /// 应用配置
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
@@ -1511,6 +1600,8 @@ pub struct AppConfig {
     pub esim: EsimConfig,
     #[serde(default)]
     pub automation: AutomationConfig,
+    #[serde(default)]
+    pub vowifi: VowifiConfig,
 }
 
 impl Default for AppConfig {
@@ -1527,6 +1618,7 @@ impl Default for AppConfig {
             work_mode: WorkMode::default(),
             esim: EsimConfig::default(),
             automation: AutomationConfig::default(),
+            vowifi: VowifiConfig::default(),
         }
     }
 }
@@ -1733,6 +1825,36 @@ impl ConfigManager {
 
     pub fn get_esim_config(&self) -> EsimConfig {
         self.config.read().unwrap().esim.clone()
+    }
+
+    pub fn get_vowifi_config(&self) -> VowifiConfig {
+        self.config.read().unwrap().vowifi.clone()
+    }
+
+    pub fn set_vowifi_feature_enabled(&self, enabled: bool) -> Result<VowifiConfig, String> {
+        let next = {
+            let mut c = self.config.write().unwrap();
+            c.vowifi.feature_enabled = enabled;
+            if !enabled {
+                c.vowifi.connection_enabled = false;
+            }
+            c.vowifi.clone()
+        };
+        self.save()?;
+        Ok(next)
+    }
+
+    pub fn set_vowifi_connection_enabled(&self, enabled: bool) -> Result<VowifiConfig, String> {
+        let next = {
+            let mut c = self.config.write().unwrap();
+            if enabled && !c.vowifi.feature_enabled {
+                return Err("vowifi_feature_disabled".to_string());
+            }
+            c.vowifi.connection_enabled = enabled;
+            c.vowifi.clone()
+        };
+        self.save()?;
+        Ok(next)
     }
 
     pub fn set_esim_config(&self, esim: EsimConfig) -> Result<(), String> {
