@@ -1159,10 +1159,12 @@ pub async fn current_sim_identity(conn: &Connection) -> Option<SimIdentity> {
     let sim_props = get_all_properties(conn, &sim_path, MM_SIM)
         .await
         .unwrap_or_default();
-    let iccid = crate::utils::normalize_iccid(&sim_props
-        .get("SimIdentifier")
-        .map(extract_string)
-        .unwrap_or_default());
+    let iccid = crate::utils::normalize_iccid(
+        &sim_props
+            .get("SimIdentifier")
+            .map(extract_string)
+            .unwrap_or_default(),
+    );
     let imsi = sim_props
         .get("Imsi")
         .map(extract_string)
@@ -1807,8 +1809,18 @@ fn parse_sms_storage_info(at_output: &str) -> Option<(u32, u32)> {
             if chunk.len() >= 3 {
                 let mem = chunk[0].trim_matches('"').trim_matches('\'');
                 if mem == "SM" {
-                    let used_clean: String = chunk[1].trim_matches('"').trim_matches('\'').chars().take_while(|c| c.is_ascii_digit()).collect();
-                    let total_clean: String = chunk[2].trim_matches('"').trim_matches('\'').chars().take_while(|c| c.is_ascii_digit()).collect();
+                    let used_clean: String = chunk[1]
+                        .trim_matches('"')
+                        .trim_matches('\'')
+                        .chars()
+                        .take_while(|c| c.is_ascii_digit())
+                        .collect();
+                    let total_clean: String = chunk[2]
+                        .trim_matches('"')
+                        .trim_matches('\'')
+                        .chars()
+                        .take_while(|c| c.is_ascii_digit())
+                        .collect();
                     let used = used_clean.parse::<u32>().ok();
                     let total = total_clean.parse::<u32>().ok();
                     if let (Some(u), Some(t)) = (used, total) {
@@ -1839,10 +1851,12 @@ pub async fn get_sim_info_data_with_cache(
 
     let sim_props = get_all_properties(conn, &sim_path, MM_SIM).await?;
     let msg_smsc = messaging_smsc_fallback(conn, &modem_path).await;
-    let iccid = crate::utils::normalize_iccid(&sim_props
-        .get("SimIdentifier")
-        .map(extract_string)
-        .unwrap_or_default());
+    let iccid = crate::utils::normalize_iccid(
+        &sim_props
+            .get("SimIdentifier")
+            .map(extract_string)
+            .unwrap_or_default(),
+    );
     let imsi = sim_props
         .get("Imsi")
         .map(extract_string)
@@ -1970,12 +1984,24 @@ pub async fn get_sim_info_data_with_cache(
     };
 
     let active = sim_props.get("Active").map(extract_bool).unwrap_or(false);
-    let operator_name = sim_props.get("OperatorName").map(extract_string).unwrap_or_default();
+    let operator_name = sim_props
+        .get("OperatorName")
+        .map(extract_string)
+        .unwrap_or_default();
 
-    let registered_operator_name = gpp_props.get("OperatorName").map(extract_string).unwrap_or_default();
-    let registered_operator_code = gpp_props.get("OperatorCode").map(extract_string).unwrap_or_default();
+    let registered_operator_name = gpp_props
+        .get("OperatorName")
+        .map(extract_string)
+        .unwrap_or_default();
+    let registered_operator_code = gpp_props
+        .get("OperatorCode")
+        .map(extract_string)
+        .unwrap_or_default();
 
-    let lock_status_u = modem_props.get("UnlockRequired").map(extract_u32).unwrap_or(0);
+    let lock_status_u = modem_props
+        .get("UnlockRequired")
+        .map(extract_u32)
+        .unwrap_or(0);
     let lock_status = match lock_status_u {
         1 => "none".to_string(),
         2 => "sim-pin".to_string(),
@@ -1994,8 +2020,14 @@ pub async fn get_sim_info_data_with_cache(
     let puk1_retries = unlock_retries.get(&4).cloned();
     let puk2_retries = unlock_retries.get(&5).cloned();
 
-    let carrier_config = modem_props.get("CarrierConfiguration").map(extract_string).unwrap_or_default();
-    let carrier_config_revision = modem_props.get("CarrierConfigurationRevision").map(extract_string).unwrap_or_default();
+    let carrier_config = modem_props
+        .get("CarrierConfiguration")
+        .map(extract_string)
+        .unwrap_or_default();
+    let carrier_config_revision = modem_props
+        .get("CarrierConfigurationRevision")
+        .map(extract_string)
+        .unwrap_or_default();
 
     let mut sms_used = None;
     let mut sms_total = None;
@@ -5545,12 +5577,12 @@ async fn nm_activate_connection(profile: &str) -> Result<(), String> {
         "nmcli",
         &[
             "--wait".into(),
-            "45".into(),
+            "30".into(),
             "connection".into(),
             "up".into(),
             profile.into(),
         ],
-        Duration::from_secs(60),
+        Duration::from_secs(45),
     )
     .await?;
     Ok(())
@@ -5768,7 +5800,17 @@ async fn power_cycle_sim_for_profile_switch_inner(
             Some(format!("停止失败，继续尝试 SIM 断电：{err}")),
         ),
     }
-    tokio::time::sleep(Duration::from_secs(3)).await;
+    // Poll for MM to become inactive instead of a fixed 3s sleep
+    for _ in 0..6 {
+        match Command::new("systemctl")
+            .args(["is-active", "--quiet", "ModemManager.service"])
+            .status()
+            .await
+        {
+            Ok(status) if !status.success() => break,
+            _ => tokio::time::sleep(Duration::from_millis(500)).await,
+        }
+    }
 
     let power_result: Result<(), String> = async {
         let qmi_device =
@@ -5790,9 +5832,9 @@ async fn power_cycle_sim_for_profile_switch_inner(
             &mut steps,
             "等待 SIM 断电完成",
             "running",
-            Some("等待 3 秒".to_string()),
+            Some("等待 1 秒".to_string()),
         );
-        tokio::time::sleep(Duration::from_secs(3)).await;
+        tokio::time::sleep(Duration::from_secs(1)).await;
         record_baseband_step(&mut steps, "等待 SIM 断电完成", "ok", None);
 
         let qmi_device = wait_for_qmi_device_path(Some(&qmi_device), Duration::from_secs(12))
@@ -5811,9 +5853,9 @@ async fn power_cycle_sim_for_profile_switch_inner(
             &mut steps,
             "等待 SIM 重新上电",
             "running",
-            Some("等待 3 秒".to_string()),
+            Some("等待 1 秒".to_string()),
         );
-        tokio::time::sleep(Duration::from_secs(3)).await;
+        tokio::time::sleep(Duration::from_secs(1)).await;
         record_baseband_step(&mut steps, "等待 SIM 重新上电", "ok", None);
         Ok(())
     }
@@ -5841,28 +5883,43 @@ async fn power_cycle_sim_for_profile_switch_inner(
         &mut steps,
         "等待基带重新枚举",
         "running",
-        Some("等待 10 秒".to_string()),
+        Some("轮询等待 Modem 出现（最长 15 秒）".to_string()),
     );
-    tokio::time::sleep(Duration::from_secs(10)).await;
-
-    let modem_path = match find_modem_path(conn).await {
-        Ok(path) => {
-            record_baseband_step(&mut steps, "等待基带重新枚举", "ok", Some(path.clone()));
-            path
+    // Poll for modem to reappear instead of a fixed 10s sleep
+    let modem_path = {
+        let enum_deadline = Instant::now() + Duration::from_secs(15);
+        let mut found_path = None;
+        loop {
+            match find_modem_path(conn).await {
+                Ok(path) => {
+                    found_path = Some(path);
+                    break;
+                }
+                Err(_) if Instant::now() < enum_deadline => {
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                }
+                Err(_) => break,
+            }
         }
-        Err(err) => {
-            let message = err.to_string();
-            record_baseband_step(
-                &mut steps,
-                "等待基带重新枚举",
-                "error",
-                Some(message.clone()),
-            );
-            return Err(message);
+        match found_path {
+            Some(path) => {
+                record_baseband_step(&mut steps, "等待基带重新枚举", "ok", Some(path.clone()));
+                path
+            }
+            None => {
+                let message = "等待基带重新枚举超时：ModemManager 启动后 15 秒内未检测到 Modem".to_string();
+                record_baseband_step(
+                    &mut steps,
+                    "等待基带重新枚举",
+                    "error",
+                    Some(message.clone()),
+                );
+                return Err(message);
+            }
         }
     };
 
-    match wait_for_radio_search(conn, &modem_path, Duration::from_secs(60)).await {
+    match wait_for_radio_search(conn, &modem_path, Duration::from_secs(30)).await {
         Ok(state) => record_baseband_step(
             &mut steps,
             "等待射频搜索网络",
@@ -5894,7 +5951,7 @@ async fn power_cycle_sim_for_profile_switch_inner(
     }
 
     if let Err(err) =
-        wait_for_registered_network(conn, &modem_path, &mut steps, Duration::from_secs(60)).await
+        wait_for_registered_network(conn, &modem_path, &mut steps, Duration::from_secs(30)).await
     {
         record_baseband_step(
             &mut steps,
