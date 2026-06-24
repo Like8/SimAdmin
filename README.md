@@ -438,6 +438,13 @@ journalctl -u simadmin -f
 
 ### 📌 v1.1.3
 
+#### ✨ 新增功能
+
+- 落地 VoWiFi 核心协议栈，支持安全网络连接、身份鉴权、网络电话（IMS）注册与短信收发核心功能。
+- 引入 3GPP 动态运营商预设机制，原生支持标准运营商，免去繁琐手动配置。
+- 上线 VoWiFi 诊断看板与参数配置页，支持连接状态、耗时时序图的实时监控与管理。
+- 建立 VoWiFi 配置、状态和日志的数据库存储，并支持在自动化中心中调度相关任务。
+
 #### 🏗️ UI 重构
 
 - 侧边栏重新布局，高频功能置顶显示，与系统配置项明确分隔。
@@ -447,6 +454,7 @@ journalctl -u simadmin -f
 
 #### 💫 体验优化
 
+- 优化 VoWiFi 错误诊断与故障排查建议，提供更加友好的故障引导。
 - 优化 eSIM Profile 详情页布局与交互细节，提升操作便利性与界面纯净度。
 - 优化全局 UI 视觉样式，移除冗余元素，调整页面间距与文字样式，界面更清爽。
 
@@ -1238,10 +1246,16 @@ SQLite 数据库保存：
 
 ### 👥 贡献者
 
-[crossgg](https://github.com/crossgg)
+- [crossgg](https://github.com/crossgg)
 
 ### 📦 参考项目
 
 - [project-cpe](https://github.com/1orz/project-cpe)
 - [SmsForwarder](https://github.com/pppscn/SmsForwarder)
 - [ddns-go](https://github.com/jeessy2/ddns-go)
+- [strongSwan](https://github.com/strongswan/strongswan) (VoWiFi / ePDG IPsec 隧道与 IKEv2/EAP-AKA 协议实现)
+- [smoltcp](https://github.com/smoltcp-rs/smoltcp) (用户态 TCP/IP 协议栈及虚拟网关路由设计)
+- [sip-core](https://github.com/snipsco/sip-core) (IMS SIP 信令解析与注册流处理)
+- [Open5GS](https://github.com/open5gs/open5gs) / [free5GC](https://github.com/free5gc/free5gc) (3GPP 标准网元 ePDG/IMS 功能及域名的互操作规范)
+- [AOSP CarrierConfig](https://android.googlesource.com/platform/packages/apps/CarrierConfig/) (安卓标准运营商配置与 3GPP 动态降级回退机制设计)
+- [mobile-broadband-provider-info](https://gitlab.gnome.org/GNOME/mobile-broadband-provider-info) (移动宽带运营商数据匹配与基准拨号参数设计)

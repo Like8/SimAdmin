@@ -1,5 +1,7 @@
 use chrono::NaiveDate;
 use serde::Serialize;
+use std::collections::HashMap;
+use std::sync::{Mutex, OnceLock};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct CarrierProfileMeta {
@@ -157,7 +159,7 @@ pub static GB_EE_23433: CarrierProfile = CarrierProfile {
         pcscf: None,
         transport: "tcp",
         local_port: 5060,
-        user_agent: "SimAdmin VoWiFi RMX3366",
+        user_agent: "SimAdmin VoWiFi",
         identity_source: "carrier_device_model",
         register: RegisterPolicy {
             supported_header: "path,sec-agree,gruu",
@@ -525,7 +527,136 @@ pub static BUILTIN_PROFILES: &[CarrierProfile] = &[
     NZ_SPARK_53005,
 ];
 
+static DYNAMIC_PROFILES: OnceLock<Mutex<HashMap<String, &'static CarrierProfile>>> = OnceLock::new();
+
+/// 动态生成标准的 3GPP 运营商配置，并将其转化为静态生命周期的引用
+pub fn generate_standard_3gpp_profile(mcc: &str, mnc: &str, mnc_len: u8) -> &'static CarrierProfile {
+    let plmn = format!("{}{}", mcc, mnc);
+    let cache = DYNAMIC_PROFILES.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut guard = cache.lock().unwrap();
+
+    if let Some(profile) = guard.get(&plmn) {
+        return profile;
+    }
+
+    // 格式化补全 MNC（标准 3GPP 域名中，MNC 必须固定补齐为 3 位，例如 15 需补为 015）
+    let padded_mnc = format!("{:0>3}", mnc);
+    let epdg_host = Box::leak(format!("epdg.epc.mnc{}.mcc{}.pub.3gppnetwork.org", padded_mnc, mcc).into_boxed_str());
+    let ims_domain = Box::leak(format!("ims.mnc{}.mcc{}.3gppnetwork.org", padded_mnc, mcc).into_boxed_str());
+    let profile_id = Box::leak(format!("dynamic_3gpp_{}", plmn).into_boxed_str());
+
+    let profile = CarrierProfile {
+        meta: CarrierProfileMeta {
+            profile_id,
+            mcc: Box::leak(mcc.to_string().into_boxed_str()),
+            mnc: Box::leak(mnc.to_string().into_boxed_str()),
+            mnc_len,
+            plmn: Box::leak(plmn.clone().into_boxed_str()),
+            country_iso2: "unknown",
+            brand: "Standard 3GPP",
+            operator_legal_name: "Generic 3GPP Carrier",
+            aliases: &[],
+            source_refs: &["Generated dynamically via 3GPP fallback rules"],
+            last_verified: "2026-06-24",
+        },
+        identity: ProfileIdentityPolicy {
+            device_model_hint: "generic_android_class",
+            spoof_imei: false,
+        },
+        epdg: EpdgPolicy {
+            host: epdg_host,
+            port: 500,
+            apn: Some("ims"),
+            ip_stack: "ipv4v6",
+            dns_server: None,
+        },
+        ikev2: Ikev2Policy {
+            nat_keepalive_seconds: 20,
+            dpd_interval_seconds: 600,
+            reauth_interval_seconds: None,
+            ike_proposals: &[
+                "aes256-sha256-prfsha512-modp2048",
+                "aes256-sha512-prfsha512-modp2048",
+                "aes256-sha256-prfsha256-modp2048",
+                "aes256-sha256-prfsha1-modp2048",
+                "aes128-sha256-prfsha1-modp2048",
+                "aes128-sha256-prfsha256-modp2048",
+                "aes128-sha256-modp2048",
+                "aes128-sha256-modp1024",
+                "aes128-sha1-modp1024",
+                "aes256-sha1-modp1024",
+                "aes256-sha256-prfsha1-modp1024",
+            ],
+            esp_proposals: &[
+                "aes256-sha256",
+                "aes128-sha256",
+                "aes256-sha512",
+                "aes128-sha1",
+            ],
+            aka_challenge_mode: "standard",
+            include_epdg_idr: true,
+        },
+        ims: ImsPolicy {
+            domain: ims_domain,
+            realm: ims_domain,
+            registrar: None,
+            pcscf: None,
+            transport: "tcp",
+            local_port: 5060,
+            user_agent: "SimAdmin VoWiFi",
+            identity_source: "isim",
+            register: RegisterPolicy {
+                supported_header: "path,sec-agree,gruu",
+                include_pani_authenticated: true,
+                strict_security_server_offer: false,
+                enable_initial_reject_fallback: true,
+                use_plain_digest_placeholder: false,
+                require_sec_agree_headers: true,
+                security_client_mechanisms: &["hmac-sha-1-96/aes-cbc/esp/trans"],
+                live_header_variant_set: "standard_ims_features",
+            },
+        },
+        sms: SmsPolicy {
+            receiver_transport: "tcp",
+            smsc_auth_required: false,
+        },
+        e911: E911Policy {
+            enabled: false,
+            provider: None,
+            entitlement_url: None,
+            websheet_host_policy: None,
+        },
+    };
+
+    let static_profile = Box::leak(Box::new(profile));
+    guard.insert(plmn, static_profile);
+    static_profile
+}
+
 pub fn resolve_by_imsi(imsi: &str) -> Option<CarrierMatch> {
+    // 1. 尝试匹配内置预设
+    if let Some(matched) = resolve_builtin_by_imsi(imsi) {
+        return Some(matched);
+    }
+
+    // 2. 尝试动态生成 3GPP 标准预设
+    let digits = imsi.trim();
+    if digits.len() >= 5 && digits.chars().all(|c| c.is_ascii_digit()) {
+        let mcc = &digits[..3];
+        let mnc_len = if digits.starts_with("310") || digits.starts_with("405") { 3 } else { 2 };
+        if digits.len() >= 3 + mnc_len {
+            let mnc = &digits[3..3 + mnc_len];
+            let profile = generate_standard_3gpp_profile(mcc, mnc, mnc_len as u8);
+            return Some(CarrierMatch {
+                profile,
+                matched_prefix: format!("{}{}", mcc, mnc),
+            });
+        }
+    }
+    None
+}
+
+fn resolve_builtin_by_imsi(imsi: &str) -> Option<CarrierMatch> {
     BUILTIN_PROFILES.iter().find_map(|profile| {
         if profile.meta.mcc.is_empty() || profile.meta.mnc.is_empty() {
             return None;
@@ -549,9 +680,22 @@ pub fn resolve_by_imsi(imsi: &str) -> Option<CarrierMatch> {
 }
 
 pub fn resolve_by_plmn(mcc: &str, mnc: &str) -> Option<&'static CarrierProfile> {
-    BUILTIN_PROFILES
+    // 1. 尝试匹配内置预设
+    if let Some(profile) = BUILTIN_PROFILES
         .iter()
         .find(|profile| profile.meta.mcc == mcc && profile.meta.mnc == mnc)
+    {
+        return Some(profile);
+    }
+
+    // 2. 尝试动态生成 3GPP 预设
+    if mcc.len() == 3 && mcc.chars().all(|c| c.is_ascii_digit())
+        && !mnc.is_empty() && mnc.chars().all(|c| c.is_ascii_digit())
+    {
+        return Some(generate_standard_3gpp_profile(mcc, mnc, mnc.len() as u8));
+    }
+
+    None
 }
 
 pub fn resolve_by_profile_id(profile_id: &str) -> Option<&'static CarrierProfile> {
@@ -559,9 +703,25 @@ pub fn resolve_by_profile_id(profile_id: &str) -> Option<&'static CarrierProfile
     if normalized.is_empty() {
         return None;
     }
-    BUILTIN_PROFILES
+
+    // 1. 尝试匹配内置预设
+    if let Some(profile) = BUILTIN_PROFILES
         .iter()
         .find(|profile| profile.meta.profile_id == normalized)
+    {
+        return Some(profile);
+    }
+
+    // 2. 尝试解析动态预设 ID
+    if let Some(plmn) = normalized.strip_prefix("dynamic_3gpp_") {
+        if plmn.len() >= 5 && plmn.len() <= 6 && plmn.chars().all(|c| c.is_ascii_digit()) {
+            let mcc = &plmn[..3];
+            let mnc = &plmn[3..];
+            return Some(generate_standard_3gpp_profile(mcc, mnc, mnc.len() as u8));
+        }
+    }
+
+    None
 }
 
 pub fn validate_builtin_profiles() -> Result<(), String> {
@@ -645,5 +805,22 @@ mod tests {
             .ikev2
             .ike_proposals
             .contains(&"aes128-sha256-prfsha1-modp2048"));
+    }
+
+    #[test]
+    fn resolves_dynamic_3gpp_profile_by_imsi_and_plmn() {
+        // 测试通过未内置的 Telekom DE (262-01) IMSI 动态解析
+        let match_result = resolve_by_imsi("262011234567890").expect("should resolve dynamically");
+        assert_eq!(match_result.profile.meta.profile_id, "dynamic_3gpp_26201");
+        assert_eq!(match_result.profile.epdg.host, "epdg.epc.mnc001.mcc262.pub.3gppnetwork.org");
+        assert_eq!(match_result.profile.ims.domain, "ims.mnc001.mcc262.3gppnetwork.org");
+
+        // 测试通过 PLMN 动态解析
+        let profile = resolve_by_plmn("262", "01").expect("should resolve dynamically");
+        assert_eq!(profile.meta.profile_id, "dynamic_3gpp_26201");
+
+        // 测试通过 Profile ID 动态解析
+        let profile_by_id = resolve_by_profile_id("dynamic_3gpp_26201").expect("should resolve dynamically");
+        assert_eq!(profile_by_id.meta.plmn, "26201");
     }
 }

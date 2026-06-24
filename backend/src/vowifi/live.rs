@@ -1006,10 +1006,15 @@ fn live_ike_proposal_groups(
             .map_err(|_| live_stage_error("ike_profile_proposal_parse_failed"))?;
         let dh_group = DhGroup::from_transform_id(dh_transform)
             .ok_or_else(|| live_stage_error("ike_dh_group_unsupported"))?;
-        groups.push(LiveIkeProposalGroup {
-            dh_group,
-            proposals: vec![*proposal],
-        });
+        
+        if let Some(existing) = groups.iter_mut().find(|g| g.dh_group == dh_group) {
+            existing.proposals.push(*proposal);
+        } else {
+            groups.push(LiveIkeProposalGroup {
+                dh_group,
+                proposals: vec![*proposal],
+            });
+        }
     }
     if groups.is_empty() {
         return Err(live_stage_error("ike_profile_missing_proposals"));
@@ -1171,9 +1176,10 @@ async fn run_live_ike_with_destination(
     )
     .await?;
     info!("Received IKE_SA_INIT response, parsing...");
-    machine
-        .accept_sa_init_response(&response)
-        .map_err(|_| live_stage_error("ike_sa_init_response_rejected"))?;
+    if let Err(err) = machine.accept_sa_init_response(&response) {
+        warn!("IKE_SA_INIT response rejected: {:?}", err);
+        return Err(live_stage_error("ike_sa_init_response_rejected"));
+    }
     info!("IKE_SA_INIT response parsed successfully");
     if target == LiveIkeTarget::SaInitReady {
         return Ok(LiveIkeSession {
