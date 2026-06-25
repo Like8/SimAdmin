@@ -104,6 +104,13 @@ cargo run -- --host :: --port 3000
 
 ## 架构与契约说明
 
+### 登录与接口保护
+
+- 管理后台页面和 `/api/*` 业务接口默认需要登录；`/api/health`、`/api/auth/status`、`/api/auth/setup`、`/api/auth/login` 为公开接口。
+- 未登录访问受保护页面会跳转到 `/login`；前端 API 请求遇到 `401` 会自动进入登录页，直接调用 API 时返回标准 JSON 错误。
+- 会话使用 `simadmin_session` HttpOnly Cookie，默认有效期 7 天。重置或清除管理员密码会清空所有 Web 会话。
+- 当前不提供手动登出入口，适合单管理员设备后台场景。
+
 ### 前后端契约
 
 - 后端模型位于 `backend/src/models.rs`。

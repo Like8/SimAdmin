@@ -70,7 +70,7 @@
 
 # SimAdmin - SIM/eSIM 中枢
 
-SimAdmin 是一套面向 Debian 蜂窝 CPE、随身 WiFi、软路由类设备的 SIM/eSIM、蜂窝网络、短信、系统状态与 WiFi Calling 管理系统。
+SimAdmin 是一套面向 Debian 蜂窝 CPE、随身 WiFi、软路由类设备的 SIM/eSIM、蜂窝网络、短信、WiFi Calling(VoWiFi)、DDNS 和系统状态管理系统。
 
 **💡 核心亮点 —— 支持 WiFi Calling (VoWiFi)**：原生实现 IKEv2/IPsec 全链路能力，无第三方程序依赖；依托 SIM 硬件鉴权搭建加密隧道，无蜂窝信号、飞行模式下仍可通过无线网络完成 IMS 注册与加密短信收发。
 
@@ -84,8 +84,8 @@ SimAdmin 是一套面向 Debian 蜂窝 CPE、随身 WiFi、软路由类设备的
 
 ## 📖 文档导航
 
-*   🚀 **[安装与部署指南 (docs/INSTALL.md)](./docs/INSTALL.md)**：设备侧一键安装、升级、卸载以及首次管理员密码设置。
-*   📜 **[版本更新记录 (docs/CHANGELOG.md)](./docs/CHANGELOG.md)**：历史版本（从 v1.0.1 至最新的 v1.1.3）详细的更新说明日志。
+*   🚀 **[安装与部署指南 (docs/INSTALL.md)](./docs/INSTALL.md)**：设备一键安装/卸载、后台默认访问地址及首次管理员密码设置。
+*   📜 **[版本更新记录 (docs/CHANGELOG.md)](./docs/CHANGELOG.md)**：历史版本详细的更新说明日志。
 *   ⚙️ **[运行环境与系统管理 (docs/ENVIRONMENT.md)](./docs/ENVIRONMENT.md)**：目标设备硬件与依赖指令要求、默认安装路径、eSIM/VoWiFi 管理机制、systemd 服务维护及数据持久化。
 *   🛠️ **[开发者指南 (docs/DEVELOPER.md)](./docs/DEVELOPER.md)**：项目工程结构、前端与后端开发编译、OTA 构建、ADB 部署调试及 D-Bus 接口说明。
 *   🔌 **[REST API 接口文档 (bruno-api/README.md)](./bruno-api/README.md)**：详细的 REST API 路由映射表、请求/响应报文规约与 Bruno API 调试集合。
